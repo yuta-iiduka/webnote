@@ -1,0 +1,81 @@
+
+# from flask_login import login_required
+# from db.db import *
+# from common.logger import logger, log
+from server import *
+
+
+NAME = "base"
+bp = Blueprint(NAME, __name__)
+
+@app.route("/",methods=["GET"])
+@login_required
+def home():
+    return render_template("home.html")
+
+@app.route("/login",methods=["GET","POST"])
+@transaction
+@log
+def login():
+    if request.method == "POST":
+        print(request.form)
+        email = request.form["email"]
+        password = request.form["password"]
+        next = request.form["next"]
+        user = User.query.filter_by(email=email).first()
+        if user is not None:
+            if user.verify_password(password):
+                login_user(user)
+                if next is not None and next != "":
+                    return redirect(next)
+                else:
+                    return redirect(url_for("home"))
+            else:
+                flash("パスワードが違います。")
+        else:
+            flash("メールアドレスが違います。",)
+    return render_template("login.html", next=request.args.get("next"))
+
+@app.route("/signup",methods=["GET","POST"])
+@transaction
+@log
+def signup():
+    next_ = request.args.get("next")
+    if request.method == "POST":
+        email = request.form["email"]
+        password = request.form["password"]
+        user = User.query.filter_by(email=email).first()
+        if user is None:
+            user = User(
+                name = None,
+                email = email,
+                password = password,
+            )
+
+            db.session.add(user)
+
+            user = User.query.filter_by(email=email).first()
+
+            if user is not None:
+                login_user(user)
+                if next_ is not None:
+                    return redirect(next_)
+                else:
+                    return redirect("/")
+            else:
+                flash("ユーザ登録に失敗しました。")
+        else:
+            flash("既にメールアドレスが利用されています。")
+    return render_template("signup.html")
+
+@app.route("/logout",methods=["GET"])
+@login_required
+@log
+def logout():
+    logout_user()
+    return redirect(url_for("login"))
+
+@socketio.event
+def connect():
+    print("connect")
+    join_room("room-{}".format(current_user.id))

@@ -1,0 +1,263 @@
+html{
+    width:100%;
+    height: 100%;
+}
+
+body{
+    width:100vw;
+    height: 100vh;
+    padding:0px;
+    margin:0px;
+    overflow: hidden;
+    background-color: black;
+    color: white;
+}
+
+table{
+    width: 100%;
+    height: 100%;
+    table-layout: fixed;
+    text-align: center;
+}
+
+input{
+    background-color: black;
+    color:white;
+}
+input[type=submit]{
+    cursor:pointer;
+}
+
+a{
+    color:aquamarine;
+    text-decoration: none;
+}
+
+iframe{
+    height: 100%; 
+    width: 100%;
+    border: none;
+    padding: 0px;
+    margin: 0px;
+}
+
+.head{
+    height: 64px;
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.body{
+    /* body - (head + foot) */
+    height: calc(100% - 96px);
+    width: 100%;
+    overflow: hidden;
+    /* overflow-y: auto; */
+    background-color: black;
+}
+
+.foot{
+    height: 32px;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.center{
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.message{
+    color: red;
+    text-align: center;
+}
+
+.content{
+    width: 100%;
+    height: 100%;
+    display: flex;
+    overflow-y: auto;
+}
+
+.content .side{
+    display: flex;
+    /* flex-wrap: wrap; */
+    flex-direction: column;
+    text-wrap: nowrap;
+    gap: 4px;
+    justify-content: start;
+    width: 24px;
+    height: 100%;
+    font-size: 24px;
+    overflow: hidden;
+    position:absolute;
+    top:0px;
+    left:0px;
+    z-index: 999;
+    background-color: #111111;
+    transition: width 0.5s;
+}
+
+.content .side.active{
+    width: 50vw;
+}
+
+.content .side .sidebar-btn{
+    cursor: pointer;
+    height:24px;
+	width:100%;
+	font-size:18px;
+	display:flex;
+    justify-content: center;
+    transition: justify-content 0.5s;
+}
+
+.content .side .sidebar-btn.active{
+    justify-content: right;
+}
+
+.content .main{
+    margin-left: 24px;
+    width: calc(100% - 24px);
+    height: 100%;
+}
+
+.main .head{
+    height: 24px;
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    background-color: #111111;
+}
+
+.main .body{
+    /* body - (head + foot) */
+    height: calc(100% - 48px);
+    width: 100%;
+    overflow: auto;
+    background-color: transparent;
+}
+
+.main .foot{
+    height: 24px;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #111111;
+}
+
+
+/* ベース：モバイル（縦並び） */
+.container {
+    display: grid;
+    grid-template-columns: 1fr; /* 1列 */
+    gap: 16px;                  /* ブロック間の余白 */
+    max-width: 1024px;          /* デモ用：中央寄せの幅制限 */
+    margin: 0 auto;
+    padding: 16px;
+    width: calc(100% - 32px);
+}
+.boxitem {
+    padding: 24px;
+    border-radius: 12px;
+    background: #92d8db;        /* 明るいグレー */
+    box-shadow: 0 2px 8px rgba(0,0,0,.06);
+    width: calc(100% - 48px);
+}
+
+/* PC幅以上では横並び（2列） */
+@media (min-width: 320px) {
+    .container {
+    grid-template-columns: 1fr 1fr; /* 2列 */
+    }
+}
+
+/* PC幅以上では横並び（2列） */
+@media (min-width: 640px) {
+    .container {
+    grid-template-columns: 1fr 1fr 1fr; /* 2列 */
+    }
+}
+
+/* PC幅以上では横並び（3列） */
+@media (min-width: 960px) {
+    .container {
+    grid-template-columns: 1fr 1fr 1fr 1fr; /* 3列 */
+    }
+}
+
+/* PC幅以上では横並び（4列） */
+@media (min-width: 1280px) {
+    .container {
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr; /* 4列 */
+    }
+}
+
+/* PC幅以上では横並び（5列） */
+@media (min-width: 1600px) {
+    .container {
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr; /* 5列 */
+    }
+}
+
+/* PC幅以上では横並び（6列） */
+@media (min-width: 1920px) {
+    .container {
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr; /* 6列 */
+    }
+}
+
+.wrap-col{
+    display: flex;
+    flex-direction: column;
+}
+@media (min-width: 720px){
+    .wrap-col{
+        flex-direction: row;
+    }
+}
+
+
+/* quill */
+.ql-customColor::after {
+  content: "🎨";
+}
+
+.ql-customBg::after {
+  content: "🖍";
+  background-color: grey;
+}
+
+
+
+/* 背景がグラデーションカラーリングされる */
+.shift-color{
+    color: white;
+    font-weight: bold;
+
+    animation: bgColorChange 6s infinite alternate;
+}
+@keyframes bgColorChange {
+    0% {
+        background-color: #3498db;
+    }
+    50% {
+        background-color: #9b59b6;
+    }
+    100% {
+        background-color: #e74c3c;
+    }
+}
+
