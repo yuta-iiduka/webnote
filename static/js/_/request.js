@@ -79,11 +79,12 @@ class RequestJSON{
     return this;
   }
 
-  async fetchGET(url=""){
-    const response = await fetch(url === "" ? this.url : url,{
-      method:"GET",
-      headers:{'Content-Type': 'application/json','X-Requested-With':'XMLHttpRequest','X-CSRFToken':RequestJSON.csrf_token},
-    })
+  async fetch(url="",options={
+    method: "POST",
+    headers: {'Content-Type': 'application/json','X-Requested-With':'XMLHttpRequest','X-CSRFToken':RequestJSON.csrf_token},
+    body: JSON.stringify({}),
+    }){
+    const response = await fetch(url === "" ? this.url : url, options);
     if(!response.ok){
       if(typeof(this.connection_error_func) === "function"){
         this.connection_error_func();
@@ -92,26 +93,65 @@ class RequestJSON{
       }
       throw new Error(RequestJSON.MESSAGE.NG);
     }
-    const data = await response.json();
-    this.res_data = data;
-    return data;
+    return response;
+  }
+
+  async fetchGET(url=""){
+    // const response = await fetch(url === "" ? this.url : url,{
+    //   method:"GET",
+    //   headers:{'Content-Type': 'application/json','X-Requested-With':'XMLHttpRequest','X-CSRFToken':RequestJSON.csrf_token},
+    // })
+    // if(!response.ok){
+    //   if(typeof(this.connection_error_func) === "function"){
+    //     this.connection_error_func();
+    //   }else{
+    //     alert(RequestJSON.MESSAGE.NG);
+    //   }
+    //   throw new Error(RequestJSON.MESSAGE.NG);
+    // }
+    // this.res_data = await response.json();
+    // return this.res_data;
+    const response = await this.fetch(url,{
+      method:"GET",
+      headers:{'Content-Type': 'application/json','X-Requested-With':'XMLHttpRequest','X-CSRFToken':RequestJSON.csrf_token},
+    });
+    this.res_data = await response.json();
+    return this.res_data;
   }
 
   async fetchPOST(url="",data=null){
-    const response = await fetch(url === "" ? this.url : url,{
+    // const response = await fetch(url === "" ? this.url : url,{
+    //   method:"POST",
+    //   headers:{'Content-Type': 'application/json','X-Requested-With':'XMLHttpRequest','X-CSRFToken':RequestJSON.csrf_token},
+    //   body: JSON.stringify(data ?? {})
+    // })
+    // if(!response.ok){
+    //   if(typeof(this.connection_error_func) === "function"){
+    //     this.connection_error_func();
+    //   }else{
+    //     alert(RequestJSON.MESSAGE.NG);
+    //   }
+    //   throw new Error(RequestJSON.MESSAGE.NG);
+    // }
+    // this.res_data = await response.json();
+    // return this.res_data;
+    const response = await this.fetch(url,{
       method:"POST",
       headers:{'Content-Type': 'application/json','X-Requested-With':'XMLHttpRequest','X-CSRFToken':RequestJSON.csrf_token},
-      body: JSON.stringify(data ?? {})
-    })
-    if(!response.ok){
-      if(typeof(this.connection_error_func) === "function"){
-        this.connection_error_func();
-      }else{
-        alert(RequestJSON.MESSAGE.NG);
-      }
-      throw new Error(RequestJSON.MESSAGE.NG);
-    }
-    return await response.json();
+      body: JSON.stringify(data ?? {}),
+    });
+    this.res_data = await response.json();
+    return this.res_data;
+  }
+
+  async fetchFormData(url="",data=null){
+    const response = await this.fetch(url,{
+      method:"POST",
+      headers:{'X-Requested-With':'XMLHttpRequest','X-CSRFToken':RequestJSON.csrf_token},
+      body: data ?? new FormData(),
+    });
+    this.res_data = await response.json();
+    return this.res_data;
   }
 
   post(data){

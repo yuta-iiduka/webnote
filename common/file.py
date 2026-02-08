@@ -160,6 +160,33 @@ class DirData():
         return tmp
     
     @property
+    def current(self):
+        entries = pathlib.Path(self.dir_path)
+        result = {
+            "current":entries.as_posix(),
+            "dirs": [],
+            "files":[],
+        }
+        
+        for p in entries.iterdir():
+            s = p.stat()
+            data = {
+                    "path":p.as_posix(),
+                    "name":p.name,
+                    "stem":p.stem,
+                    "suffix":p.suffix,
+                    "size":s.st_size,
+                    "updated_at":datetime.datetime.fromtimestamp(s.st_mtime).strftime("%Y/%m/%d %H:%M:%S"),
+                    "accessed_at": datetime.datetime.fromtimestamp(s.st_atime).strftime("%Y/%m/%d %H:%M:%S"),
+                    "created_at":datetime.datetime.fromtimestamp(s.st_ctime).strftime("%Y/%m/%d %H:%M:%S"),
+            }
+            if p.is_dir():
+                result["dirs"].append(data)
+            elif p.is_file():
+                result["files"].append(data)
+        return result
+    
+    @property
     def filenames(self):
         tmp = []
         for root, dirs, files in os.walk(self.dir_path):
@@ -204,6 +231,12 @@ class DirData():
     def create(self):
         os.makedirs(self.dir_path,exist_ok=True)
 
+    def rename(self,new_dir_path):
+        p = pathlib.Path(new_dir_path)
+        if p.exists():
+            raise Exception(f"{new_dir_path}は既に使われています。")
+        else:
+            pathlib.Path(self.dir_path).rename(new_dir_path)
 
 class FileData():
     """ ファイルの読み書きを行うクラス
@@ -428,6 +461,42 @@ class FileData():
                         result = False
                 else:
                     result = False
+                return result
+            except Exception as e:
+                self.errors = e
+                print(e)
+                return result
+        else:
+            self.errors = FileData.ERROR_EMPTY_FILEPATH
+            return result
+        
+    def rename(self,new_file_path=""):
+        """
+        リネーム成功：True
+        リネーム失敗：False
+        """
+        try:
+            self._rename(new_file_path)
+            return True
+        except Exception as e:
+            self.errors = e
+            print(e)
+            return False
+        
+    def _rename(self,new_file_path=""):
+        """
+        リネーム（リネーム処理）
+        """
+        result = False
+        if self.file_path != "" and new_file_path != "":
+            try:
+                p = pathlib.Path(new_file_path)
+                if p.exists():
+                    result = False
+                    raise Exception(f"{new_file_path}は既に使われています。")
+                else:
+                    pathlib.Path(self.file_path).rename(new_file_path)
+                    result = True
                 return result
             except Exception as e:
                 self.errors = e
@@ -1590,6 +1659,8 @@ if __name__ == "__main__":
     dd = DirData("etc")
     print(dd.dir_name)
     print(dd.dirs)
+    print(dd.current)
+
 
     # cjd = JsonData("etc/test.json")
     # cjd = CryptJsonData("etc/test.json","etc/key.txt","utf-8","ascii",None,True)

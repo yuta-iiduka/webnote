@@ -5,10 +5,14 @@
 {% block title %}HOME{% endblock %}
 
 {% block content %}
-    <div class="center">
+    <div class="center" 
+        data-url-dataload="{{url_for('user.dataload',path='path')}}"
+        data-url-save    ="{{url_for('user.save')}}"
+    >
     </div>
 {% endblock %}
 
 {% block script %}
+    <script src="{{url_for('static',filename='js/_/filemanager.js')}}"></script>
     <script src="{{url_for('static',filename='js/user/mypage.js')}}"></script>
 {% endblock %}
