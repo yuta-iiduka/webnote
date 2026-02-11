@@ -154,6 +154,20 @@ class RequestJSON{
     return this.res_data;
   }
 
+  async fetchFile(url="",data={path:"filepath"}){
+    const response = await this.fetch(url,{
+      method:"POST",
+      headers:{'Content-Type': 'application/json','X-Requested-With':'XMLHttpRequest','X-CSRFToken':RequestJSON.csrf_token},
+      body: JSON.stringify(data ?? {}),
+    });
+    this.res_data = await response.blob();
+    if (data.path){
+      const path_splited = data.path.split("/");
+      this.res_data = new File([this.res_data], path_splited[path_splited.length - 1], {type:this.res_data.type});
+    }
+    return this.res_data;
+  }
+
   post(data){
     if(data === undefined){data = {}}
     this.xhr.open("POST",this.url_post);

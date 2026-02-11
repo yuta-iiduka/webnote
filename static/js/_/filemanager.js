@@ -1,5 +1,38 @@
 console.log("filemanager.js");
 
+class FileData{
+    constructor(file = new File([""],"sample.txt")){
+        this.file = file;
+        this.type = file.type;
+    }
+
+    async read(){
+        if(this.file.type.includes("text") || this.file.type.includes("json")){
+            this.data = await this.file.text();
+        }
+        this.data = await this.file.arrayBuffer();
+        return this.data;
+    }
+}
+
+class ExcelData extends FileData{
+
+    constructor(file){
+        super(file);
+    }
+
+    async read(){
+        this.data = await this.file.arrayBuffer();
+        this.workbook = XLSX.read(this.data,{type:"array"});
+        this.active_sheet_name = this.workbook.SheetNames[0];
+        this.active_sheet = this.workbook.Sheets[this.active_sheet_name];
+        this.active_sheet_data = XLSX.utils.sheet_to_json(this.active_sheet);
+        console.log(this.active_sheet_data);
+    }
+}
+
+
+
 class FileManager{
 
     static style = null;
@@ -25,10 +58,12 @@ class FileManager{
         this.backup = {files:[],dirs:[]};
         this.selected = {files:[],dirs:[]};
         this.url = {
-            save: "",
-            dataload: "",
+            read: "",
+            load: "",
             download: "",
-            rename: "",
+            upload:"",
+            rename:"",
+            delete:"",
         }
         this.request = new RequestData();
     }
