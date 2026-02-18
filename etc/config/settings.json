@@ -1,0 +1,10 @@
+{
+    "env":"develop",
+    "app_host":"0.0.0.0",
+    "app_port":"5555",
+    "db_uri":"",
+    "db_host":"127.0.0.1",
+    "db_user":"postgres",
+    "db_password":"postgres",
+    "db_name":[]
+}
