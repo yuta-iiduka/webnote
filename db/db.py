@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 # 標準ライブラリのインポート
 from functools import wraps
-import datetime, inspect, sys, json, ast
+import datetime, inspect, sys, json, ast, uuid, decimal, enum
 
 db = SQLAlchemy()
 
@@ -21,16 +21,89 @@ def transaction(func):
         except Exception as e:
             db.session.rollback()
             raise e
-                
     return wrapper
 
 class BaseColumn(object):
-    id         = db.Column(db.Integer, primary_key=True)
+    id         = db.Column(db.Integer,  primary_key=True)
     status     = db.Column(db.Integer,  default=0)
     created_at = db.Column(db.DateTime, default=datetime.datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.datetime.now, onupdate=datetime.datetime.now)
     deleted_at = db.Column(db.DateTime, default=None)
 
+    @classmethod
+    def to_dict_list(cls, model_list):
+        return [obj.to_dict() for obj in model_list]
+
+    def to_dict(
+        self,
+        include_relationships=False,
+        backref=False,
+        exclude_none=False,
+    ):
+        def serialize(value):
+            """あらゆる型をJSON化可能な形に変換する"""
+
+            if value is None:
+                return None
+
+            # datetime系
+            if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+                return value.isoformat()
+
+            # Decimal
+            if isinstance(value, decimal.Decimal):
+                return float(value)
+
+            # UUID
+            if isinstance(value, uuid.UUID):
+                return str(value)
+
+            # Enum
+            if isinstance(value, enum.Enum):
+                return value.value
+
+            # list / tuple / set
+            if isinstance(value, (list, tuple, set)):
+                return [serialize(v) for v in value]
+
+            # dict (JSONカラム含む)
+            if isinstance(value, dict):
+                return {k: serialize(v) for k, v in value.items()}
+
+            # SQLAlchemyモデル（リレーション用）
+            if isinstance(value.__class__, db.Model.__class__):
+                return value.to_dict(include_relationships=backref)
+
+            return value
+
+        result = {}
+
+        # カラム
+        for column in self.__table__.columns:
+            value = getattr(self, column.name)
+            serialized = serialize(value)
+
+            if exclude_none and serialized is None:
+                continue
+
+            result[column.name] = serialized
+
+        # リレーション
+        if include_relationships:
+            for relation in self.__mapper__.relationships:
+                value = getattr(self, relation.key)
+
+                if value is None:
+                    result[relation.key] = None
+                elif relation.uselist:
+                    result[relation.key] = [
+                        item.to_dict(backref=True)
+                        for item in value
+                    ]
+                else:
+                    result[relation.key] = value.to_dict(backref=True)
+
+        return result
 
 class User(db.Model,UserMixin,BaseColumn):
     """ userテーブル
@@ -116,6 +189,24 @@ class UserAnswerFrame(db.Model,BaseColumn):
     __tablename__ = "user_answer_frame"
     user_answer_quest_id     = db.Column(db.Integer, nullable=False)
     value        = db.Column(db.Text, default="")
+
+
+class Blog(db.Model, BaseColumn):
+    """ blogテーブル
+    """
+    __tablename__ = "blog"
+    user_id = db.Column(db.Integer, nullable=False, default=0)
+    html    = db.Column(db.Text,nullable=False,default="")
+    title   = db.Column(db.String(256),nullable=False,default="")
+    status  = db.Column(db.Integer, default=0)
+
+class BlogComment(db.Model.BaseColumn):
+    """ blog_commentテーブル
+    """
+    __tablename__ = "blog_comment"
+    text    = db.Column(db.Text,nullable=False,default="")
+    status  = db.Column(db.Integer, default=0)
+    user_id = db.Column(db.Text,nullable=False)
 
 if __name__ == "__main__":
     pass

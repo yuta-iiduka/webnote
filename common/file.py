@@ -22,7 +22,7 @@ except Exception as e:
 
 try:
     import PIL
-
+    from PIL import Image, ImageDraw, ImageFont
 except Exception as e:
     print(e)
     print(IMPORTERROR_MESSAGE.format("画像データ"))
@@ -653,7 +653,7 @@ class BinaryData(FileData):
 
 class ImageController():
 
-    def bytes_to_image(self,data: bytes) -> PIL.Image.Image:
+    def bytes_to_image(self,data: bytes):
         """ 
         DB / API / ファイルから読んだ画像を操作する場合に呼び出す
 
@@ -674,14 +674,14 @@ class ImageController():
         img: PIL.Image.Image,
         size: tuple[int, int],
         keep_aspect=True
-    ) -> PIL.Image.Image:
+    ):
         if keep_aspect:
             img = img.copy()
             img.thumbnail(size)
             return img
         return img.resize(size)
     
-    def normalize_mode(self,img: PIL.Image.Image, mode="RGB") -> PIL.Image.Image:
+    def normalize_mode(self,img: PIL.Image.Image, mode="RGB"):
         """
             JPEGなどはRGBAなどのAlpha値がないため、エラーになる。そのため、この関数でRGBなどに変換する。
         """
@@ -708,7 +708,7 @@ class ImageController():
         mime = f"image/{fmt.lower()}"
         return f"data:{mime};base64,{b64}"
     
-    def data_url_to_image(self,data_url: str) -> PIL.Image.Image:
+    def data_url_to_image(self,data_url: str):
         """
         data:urlから画像データへ変換し画像を取得する
         
@@ -723,17 +723,102 @@ class ImageController():
     
     def save(self,img: PIL.Image.Image, file_path:str, fmt=None):
         img.save(file_path, format=fmt)
+
+    def textbox(self,txt="SAMPLE"):
+        image = PIL.Image.new("RGB", self.size, "white")
+        draw = PIL.ImageDraw.Draw(image)
+        # # テキストのバウンディングボックス取得
+        # bbox = draw.textbox((0,0),txt,font=self.font)
+        # text_width  = bbox[2] - bbox[0]
+        # text_height = bbox[3] - bbox[1]
+        # # 中央座標計算
+        # x = (image.width - text_width) / 2
+        # y = (image.height - text_height) / 2
+
+        # # テキスト描画
+        # draw.text((x, y), txt, fill="black", font=self.font)
+
+        draw.multiline_text(
+            (image.width / 2, image.height / 2),
+            "1行目\n2行目\n3行目",
+            fill="black",
+            font=self.fontont,
+            anchor="mm",
+            align="center"
+        )
+        return image
+    
+    def get_max_font(self, draw, text, font_path, max_width, max_height, max_size=200):
+        size = max_size
+        while size > 10:
+            font = PIL.ImageFont.truetype(font_path, size)
+            bbox = draw.multiline_textbbox((0, 0), text, font=font, align="center")
+            w = bbox[2] - bbox[0]
+            h = bbox[3] - bbox[1]
+            if w <= max_width and h <= max_height:
+                return font
+            size -= 1
+        return PIL.ImageFont.truetype(font_path, 10)
+
+    def add_textbox(
+        self,
+        image_path,
+        output_path,
+        text,
+        box,
+        font_path
+    ):
+        # 画像をRGBAで開く（透明対応）
+        image = PIL.Image.open(image_path).convert("RGBA")
         
+        # 半透明レイヤーを作る
+        overlay = PIL.Image.new("RGBA", image.size, (0, 0, 0, 0))
+        draw = PIL.ImageDraw.Draw(overlay)
+
+        x1, y1, x2, y2 = box
+        box_width = x2 - x1
+        box_height = y2 - y1
+
+        # 半透明黒ボックス
+        draw.rectangle(
+            box,
+            fill=(0, 0, 0, 120)  # RGBA
+        )
+
+        # フォント自動調整
+        font = self.get_max_font(draw, text, font_path, box_width - 5, box_height - 5, 300)
+
+        center_x = x1 + box_width / 2
+        center_y = y1 + box_height / 2
+
+        # テキスト描画
+        draw.multiline_text(
+            (center_x, center_y),
+            text,
+            font=font,
+            fill="white",
+            anchor="mm",
+            align="center",
+            stroke_width=3,
+            stroke_fill="black"
+        )
+
+        # 元画像と合成
+        combined = PIL.Image.alpha_composite(image, overlay)
+
+        combined.convert("RGB").save(output_path)
+
+
 
 class ImageData(BinaryData):
-    def __init__(self,file_path,first_read=True):
+    def __init__(self,file_path,first_read=True, controller=None):
         super().__init__(file_path=file_path,first_read=first_read)
-        self.controller = ImageController()
+        self.controller = ImageController() if controller is None else controller
         self.image = None
         if first_read:
             self.image = self.bytes_to_image()
 
-    def bytes_to_image(self) -> PIL.Image.Image:
+    def bytes_to_image(self):
         """ DB / API / ファイルから読んだ画像を操作する場合に呼び出す
         :return: PIL.imageデータ
         """
@@ -744,10 +829,10 @@ class ImageData(BinaryData):
         """
         return self.controller.image_to_bytes(self.image,fmt)
     
-    def resize(self,size: tuple[int, int],keep_aspect=True) -> PIL.Image.Image:
+    def resize(self,size: tuple[int, int],keep_aspect=True):
         return self.controller.resize(self.image,size,keep_aspect)
     
-    def normalize_mode(self, mode="RGB") -> PIL.Image.Image:
+    def normalize_mode(self, mode="RGB"):
         """ JPEGなどはRGBAなどのAlpha値がないため、エラーになる。そのため、この関数でRGBなどに変換する。
         """
         return self.controller.normalize_mode(self.image,mode)
@@ -765,7 +850,7 @@ class ImageData(BinaryData):
         """
         return self.controller.image_to_data_url(self.image,fmt)
     
-    def data_url_to_image(self,data_url: str) -> PIL.Image.Image:
+    def data_url_to_image(self,data_url: str):
         """
         data:urlから画像データへ変換し画像を取得する
         
@@ -784,6 +869,16 @@ class ImageData(BinaryData):
             bd.data = self.data
             if not (bd.data and bd.write()):
                 self.errors = "{}書き込みに失敗しました。".format(file_path)
+
+    def textbox(self,txt="SAMPLE",save_path="",box=(200,300,1000,600),font_path = r"C:\Windows\Fonts\meiryo.ttc"):
+        """
+        box=(x1,y1,x2,y1)
+        1200x900で中央揃えになる
+        """
+        if save_path == "":
+            save_path = self.file_path + ".textbox.png"
+        self.controller.add_textbox(self.file_path,save_path,txt,box,font_path)
+        return ImageData(save_path,True,self.controller)
 
 class JsonData(FileData):
     def __init__(self,file_path,encoding="utf-8",newline=None,first_read=True):
@@ -1392,6 +1487,10 @@ class HTMLData(FileData):
         self.data = lxml.etree.toString(self.document,pretty_print=True,encoding="unicode")
         return super()._write(file)
     
+    def load(self,html):
+        self.data = html
+        self.document = lxml.html.fromstring(html)
+    
     def xpath(self,x):
         """
         HTMLからXPATHによるDOMの取得をする        
@@ -1652,14 +1751,22 @@ if __name__ == "__main__":
     py -m common.file
     """
 
+    img = ImageData("etc/data/frame.png")
+    tbox_img = img.textbox(txt="""こんにちは！世界！
+    ごきげんいかがですか？こんにちは！
+    サムネイルテスト
+    """,
+    box=(0,0,1200,900))
+    tbox_img.resize((400,300)).save("etc/data/frame.thmbnail.png")
+
     # htmld = HTMLData("etc/data/sample.html")
     # print(htmld.title)
     # print(htmld.fullText)
 
-    dd = DirData("etc")
-    print(dd.dir_name)
-    print(dd.dirs)
-    print(dd.current)
+    # dd = DirData("etc")
+    # print(dd.dir_name)
+    # print(dd.dirs)
+    # print(dd.current)
 
 
     # cjd = JsonData("etc/test.json")
