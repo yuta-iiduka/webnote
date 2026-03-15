@@ -1,59 +1,145 @@
 import socket
 import selectors
-import threading
-import struct
-import pickle
+import json
 import uuid
-import time
-from concurrent.futures import ThreadPoolExecutor
+import struct
+from abc import ABC, abstractmethod
 
-HEADER_SIZE = 4
-MAX_PACKET = 65507
+MAX_PACKET = 1024
 
 
-class BaseTransport:
+class PacketCodec:
 
     def __init__(self):
-        self.selector = selectors.DefaultSelector()
-        self.callback = None
-        self.executor = ThreadPoolExecutor(max_workers=8)
-        self.running = False
+        self.buffers = {}
 
-    def receive(self, callback):
-        self.callback = callback
+    def encode_packets(self, data):
 
-    def _dispatch(self, data, addr):
-        if self.callback:
-            self.executor.submit(self.callback, data, addr)
+        payload = json.dumps(data).encode()
 
-    def _encode(self, data):
-        payload = pickle.dumps(data)
-        size = struct.pack(">I", len(payload))
-        return size + payload
+        chunks = [
+            payload[i:i + MAX_PACKET]
+            for i in range(0, len(payload), MAX_PACKET)
+        ]
 
-    def _decode_stream(self, buffer):
+        total = len(chunks)
+        msg_id = str(uuid.uuid4())
+
+        packets = []
+
+        for i, chunk in enumerate(chunks):
+
+            packet = {
+                "id": msg_id,
+                "index": i,
+                "total": total,
+                "data": chunk.decode()
+            }
+
+            raw = json.dumps(packet).encode()
+
+            header = struct.pack("!I", len(raw))
+
+            packets.append(header + raw)
+
+        return packets
+
+    def decode_stream(self, conn, data):
+
+        if conn not in self.buffers:
+            self.buffers[conn] = b""
+
+        self.buffers[conn] += data
 
         messages = []
 
         while True:
-            if len(buffer) < HEADER_SIZE:
+
+            if len(self.buffers[conn]) < 4:
                 break
 
-            size = struct.unpack(">I", buffer[:HEADER_SIZE])[0]
+            length = struct.unpack("!I", self.buffers[conn][:4])[0]
 
-            if len(buffer) < HEADER_SIZE + size:
+            if len(self.buffers[conn]) < 4 + length:
                 break
 
-            payload = buffer[HEADER_SIZE:HEADER_SIZE + size]
-            buffer = buffer[HEADER_SIZE + size:]
+            payload = self.buffers[conn][4:4 + length]
 
-            messages.append(pickle.loads(payload))
+            self.buffers[conn] = self.buffers[conn][4 + length:]
 
-        return messages, buffer
-    
-class TCPServer(BaseTransport):
+            packet = json.loads(payload.decode())
 
-    def __init__(self, host="0.0.0.0", port=9000):
+            messages.append(packet)
+
+        return messages
+
+
+class PacketAssembler:
+
+    def __init__(self):
+        self.storage = {}
+
+    def add(self, packet):
+
+        msg_id = packet["id"]
+        idx = packet["index"]
+        total = packet["total"]
+        data = packet["data"]
+
+        if msg_id not in self.storage:
+            self.storage[msg_id] = {
+                "total": total,
+                "chunks": {}
+            }
+
+        self.storage[msg_id]["chunks"][idx] = data
+
+        if len(self.storage[msg_id]["chunks"]) == total:
+
+            chunks = self.storage[msg_id]["chunks"]
+
+            full = "".join(
+                chunks[i] for i in range(total)
+            )
+
+            del self.storage[msg_id]
+
+            return json.loads(full)
+
+        return None
+
+
+class BaseConnection(ABC):
+
+    def __init__(self):
+
+        self.selector = selectors.DefaultSelector()
+        self.codec = PacketCodec()
+        self.assembler = PacketAssembler()
+
+        self.recv_callback = None
+
+    def receive(self, callback):
+
+        self.recv_callback = callback
+
+    @abstractmethod
+    def send(self, data):
+        pass
+
+    @abstractmethod
+    def sendto(self, addr, data):
+        pass
+
+    @abstractmethod
+    def run(self):
+        pass
+
+
+class TCPServer(BaseConnection):
+
+    def __init__(self, host, port):
+
         super().__init__()
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -73,7 +159,7 @@ class TCPServer(BaseTransport):
         conn, addr = sock.accept()
         conn.setblocking(False)
 
-        self.clients[conn] = {"addr": addr, "buffer": b""}
+        self.clients[conn] = addr
 
         self.selector.register(conn, selectors.EVENT_READ, self._read)
 
@@ -81,342 +167,215 @@ class TCPServer(BaseTransport):
 
         try:
             data = conn.recv(4096)
-
-            if not data:
-                self.selector.unregister(conn)
-                conn.close()
-                return
-
-            client = self.clients[conn]
-            client["buffer"] += data
-
-            messages, client["buffer"] = self._decode_stream(client["buffer"])
-
-            for msg in messages:
-                self._dispatch(msg, client["addr"])
-
         except:
-            pass
+            data = None
 
-    def send(self, conn, data):
-        packet = self._encode(data)
-        conn.sendall(packet)
+        if not data:
+            self.selector.unregister(conn)
+            conn.close()
+            del self.clients[conn]
+            return
+
+        packets = self.codec.decode_stream(conn, data)
+
+        for packet in packets:
+
+            msg = self.assembler.add(packet)
+
+            if msg and self.recv_callback:
+                self.recv_callback(self.clients[conn], msg)
+
+    def send(self, data):
+
+        packets = self.codec.encode_packets(data)
+
+        for conn in list(self.clients):
+
+            try:
+                for p in packets:
+                    conn.sendall(p)
+            except:
+                pass
 
     def sendto(self, addr, data):
-        for conn, info in self.clients.items():
-            if info["addr"] == addr:
-                self.send(conn, data)
+
+        packets = self.codec.encode_packets(data)
+        for conn, a in self.clients.items():
+            if a == addr:
+                try:
+                    for p in packets:
+                        conn.sendall(p)
+                except:
+                    pass
 
     def run(self):
 
-        self.running = True
+        while True:
 
-        while self.running:
             events = self.selector.select()
 
             for key, _ in events:
+
                 callback = key.data
                 callback(key.fileobj)
 
-class TCPClient(BaseTransport):
 
-    def __init__(self,host="0.0.0.0", port=9000):
+class TCPClient(BaseConnection):
+
+    def __init__(self, host, port):
+
         super().__init__()
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((host, port))
-        self.sock.setblocking(False)
 
-        self.buffer = b""
+        self.sock.connect((host, port))
+
+        self.sock.setblocking(False)
 
         self.selector.register(self.sock, selectors.EVENT_READ, self._read)
 
     def _read(self, sock):
 
-        data = sock.recv(4096)
+        try:
+            data = sock.recv(4096)
+        except:
+            data = None
 
-        self.buffer += data
+        if not data:
+            return
 
-        messages, self.buffer = self._decode_stream(self.buffer)
+        packets = self.codec.decode_stream(sock, data)
 
-        for m in messages:
-            self._dispatch(m, sock.getpeername())
+        for packet in packets:
+
+            msg = self.assembler.add(packet)
+
+            if msg and self.recv_callback:
+                self.recv_callback(msg)
 
     def send(self, data):
-        packet = self._encode(data)
-        self.sock.sendall(packet)
+
+        packets = self.codec.encode_packets(data)
+
+        for p in packets:
+            self.sock.sendall(p)
 
     def sendto(self, addr, data):
+
         self.send(data)
 
     def run(self):
 
-        self.running = True
+        while True:
 
-        while self.running:
             events = self.selector.select()
 
             for key, _ in events:
+
                 callback = key.data
                 callback(key.fileobj)
 
-class UDPServer(BaseTransport):
 
-    def __init__(self, host="0.0.0.0", port=9000):
+class UDPServer(BaseConnection):
+
+    def __init__(self, host, port):
+
         super().__init__()
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
         self.sock.bind((host, port))
+
         self.sock.setblocking(False)
 
         self.selector.register(self.sock, selectors.EVENT_READ, self._read)
 
     def _read(self, sock):
 
-        data, addr = sock.recvfrom(MAX_PACKET)
+        data, addr = sock.recvfrom(65535)
 
-        msg = pickle.loads(data)
+        try:
+            packet = json.loads(data.decode())
+        except:
+            return
 
-        self._dispatch(msg, addr)
+        msg = self.assembler.add(packet)
+
+        if msg and self.recv_callback:
+            self.recv_callback(addr, msg)
 
     def send(self, data):
         pass
 
     def sendto(self, addr, data):
 
-        payload = pickle.dumps(data)
+        packets = self.codec.encode_packets(data)
 
-        if len(payload) > MAX_PACKET:
-            raise ValueError("UDP packet too large")
+        for p in packets:
 
-        self.sock.sendto(payload, addr)
+            raw = p[4:]
+
+            self.sock.sendto(raw, addr)
 
     def run(self):
 
-        self.running = True
-
-        while self.running:
+        while True:
 
             events = self.selector.select()
 
             for key, _ in events:
+
                 callback = key.data
                 callback(key.fileobj)
 
-class UDPClient(BaseTransport):
 
-    def __init__(self, host="0.0.0.0", port=9000):
+class UDPClient(BaseConnection):
+
+    def __init__(self):
+
         super().__init__()
 
-        self.server = (host, port)
-
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
         self.sock.setblocking(False)
 
         self.selector.register(self.sock, selectors.EVENT_READ, self._read)
 
     def _read(self, sock):
 
-        data, addr = sock.recvfrom(MAX_PACKET)
+        data, addr = sock.recvfrom(65535)
 
-        msg = pickle.loads(data)
+        try:
+            packet = json.loads(data.decode())
+        except:
+            return
 
-        self._dispatch(msg, addr)
+        msg = self.assembler.add(packet)
+
+        if msg and self.recv_callback:
+            self.recv_callback(addr, msg)
 
     def send(self, data):
-
-        payload = pickle.dumps(data)
-
-        self.sock.sendto(payload, self.server)
+        pass
 
     def sendto(self, addr, data):
 
-        payload = pickle.dumps(data)
+        packets = self.codec.encode_packets(data)
 
-        self.sock.sendto(payload, addr)
+        for p in packets:
+
+            raw = p[4:]
+
+            self.sock.sendto(raw, addr)
 
     def run(self):
 
-        self.running = True
-
-        while self.running:
+        while True:
 
             events = self.selector.select()
 
             for key, _ in events:
+
                 callback = key.data
                 callback(key.fileobj)
-
-
-class Session:
-
-    def __init__(self, conn=None, addr=None, transport=None):
-
-        self.id = str(uuid.uuid4())
-        self.conn = conn
-        self.addr = addr
-        self.transport = transport
-
-        self.created_at = time.time()
-        self.updated_at = self.created_at
-
-        self.data = {}
-
-    def send(self, data):
-
-        if self.transport:
-            self.transport.send(data)
-
-        elif self.conn:
-            raise RuntimeError("transport未設定")
-
-
-class SessionManager:
-
-    def __init__(self):
-
-        self.sessions = {}
-        self.conn_index = {}
-        self.addr_index = {}
-
-        self.lock = threading.RLock()
-
-    # CREATE
-    def create(self, conn=None, addr=None, transport=None):
-
-        session = Session(conn, addr, transport)
-
-        with self.lock:
-
-            self.sessions[session.id] = session
-
-            if conn:
-                self.conn_index[conn] = session.id
-
-            if addr:
-                self.addr_index[addr] = session.id
-
-        return session
-
-    # READ
-    def get(self, session_id):
-
-        with self.lock:
-            return self.sessions.get(session_id)
-
-    def get_by_conn(self, conn):
-
-        with self.lock:
-            sid = self.conn_index.get(conn)
-
-            if sid:
-                return self.sessions.get(sid)
-
-    def get_by_addr(self, addr):
-
-        with self.lock:
-            sid = self.addr_index.get(addr)
-
-            if sid:
-                return self.sessions.get(sid)
-
-    # UPDATE
-    def update(self, session_id, **kwargs):
-
-        with self.lock:
-
-            session = self.sessions.get(session_id)
-
-            if not session:
-                return None
-
-            for k, v in kwargs.items():
-                setattr(session, k, v)
-
-            session.updated_at = time.time()
-
-            return session
-
-    # DELETE
-    def delete(self, session_id):
-
-        with self.lock:
-
-            session = self.sessions.pop(session_id, None)
-
-            if not session:
-                return False
-
-            if session.conn in self.conn_index:
-                del self.conn_index[session.conn]
-
-            if session.addr in self.addr_index:
-                del self.addr_index[session.addr]
-
-            return True
-
-    # LIST
-    def list_sessions(self):
-
-        with self.lock:
-            return list(self.sessions.values())
-
-    # COUNT
-    def count(self):
-
-        with self.lock:
-            return len(self.sessions)
-
-    # BROADCAST
-    def broadcast(self, data):
-
-        with self.lock:
-
-            for session in self.sessions.values():
-
-                try:
-                    session.send(data)
-                except Exception:
-                    pass
-
-    # MULTICAST
-    def multicast(self, session_ids, data):
-
-        with self.lock:
-
-            for sid in session_ids:
-
-                session = self.sessions.get(sid)
-
-                if session:
-                    try:
-                        session.send(data)
-                    except Exception:
-                        pass
-
-if __name__ == "__main__":
-
-    server = TCPServer("127.0.0.1",port=9000)
-
-    def on_receive(data, addr):
-        print("recv", addr, data)
-
-    server.receive(on_receive)
-
-    server_thread = threading.Thread(target=server.run).start()
-
-
-    client = TCPClient("127.0.0.1", 9000)
-
-    def on_receive(data, addr):
-        print("server:", data)
-
-    client.receive(on_receive)
-
-    client_thread = threading.Thread(target=client.run).start()
-
-    client.send({"msg":"hello"})
-
-
-
 
