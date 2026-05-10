@@ -1,7 +1,7 @@
 # 外部ライブラリのインポート
 from flask import (
     Flask,Blueprint,
-    redirect,render_template,url_for,make_response,request,flash
+    redirect,render_template,jsonify,url_for,make_response,request,flash,send_file
 )
 from flask_wtf.csrf import CSRFProtect
 from flask_socketio import SocketIO, emit, send,join_room,leave_room,close_room,rooms,disconnect,ConnectionRefusedError
@@ -12,7 +12,7 @@ from flask_login import (
 )
 
 # 標準モジュールのインポート
-import importlib
+import importlib,mimetypes,asyncio
 
 # モデルのインポート
 from db.db import *
@@ -31,6 +31,8 @@ socketio = sf.socketio
 migrate = sf.migrate
 csrf = sf.csrf
 app = sf.app
+udp_server = sf.udp_server
+udp_client = sf.udp_client
 
 app.config["SECRET_KEY"] = "xxxxxxxx"
 app.config['JSON_AS_ASCII'] = False
@@ -66,9 +68,6 @@ def create_app():
             if hasattr(module,"bp"):
                 app.register_blueprint(module.bp)
 
-            # if hasattr(module,"register_socketio"):
-            #     module.register_socketio(socketio)
-
     # URL Route
     for rule in app.url_map.iter_rules():
         print(rule,rule.endpoint)
@@ -80,20 +79,56 @@ def create_app():
     aps.init_app(app)
     aps.start()
 
-    return socketio
+    return app
 
+
+@udp_server.callback
+async def test(data,addr):
+    print("test recieve from",addr,data)
+
+@udp_client.callback
+async def test(data,addr):
+    print("test recieve from",addr,data)
+
+@udp_client.receive
+async def _res(data,addr):
+    print("[CLIENT] recieve from",addr,data)
+
+@udp_server.receive
+async def _res(data,addr):
+    print("[SERVER] recieve from",addr,data)
+
+async def main():
+    
+    udp_server.run()
+    udp_client.run()
+    print(udp_server,udp_server.transport,udp_server.event_loop)
+    print(udp_client,udp_client.transport,udp_client.event_loop)
+    udp_server.coroutine(udp_server.sendto({"type":"test","message":"OK"},("::1",9998)))
+
+    udp_server.run_worker()
+    udp_client.run_worker()
+    # sf.run(create_app(), const["app_host"], const["app_port"])
+    socketio.run(create_app(), const["app_host"], const["app_port"])
+
+    while True:
+        await asyncio.sleep(1)
 
 if __name__ == "__main__":
     """
-    $env:FLASK_APP = "server.py"
+    # windows
+    $env:FLASK_APP = "server:create_app()"
     py -m flask db init
     py -m flask db migrate
     py -m flask db upgrade
     
     py server.py
 
+    
+    # linux
+    gunicorn -c src/gunicorn.conf.py server:create_app()
+
     """
-    # app.run(host="0.0.0.0", port=5555)
     print(const)
-    create_app().run(app,host=const["app_host"], port=const["app_port"])
+    asyncio.run(main())
     

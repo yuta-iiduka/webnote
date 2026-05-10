@@ -1,3 +1,5 @@
+import threading, asyncio
+from common.communication import *
 from flask import Flask
 from flask_login import LoginManager
 from flask_socketio import SocketIO
@@ -24,5 +26,12 @@ class SingletonFlask:
             self.socketio = SocketIO(self.app, cors_allowed_origins="*")
             self.migrate = Migrate(self.app, db)
             self.csrf = CSRFProtect(self.app)
+            self.udp_server = UDPServer(host="::1",port=9999)
+            self.udp_client = UDPClient(host="::1",port=9999,local_port=9998)
+
             SingletonFlask._initialized = True
         
+    def run(self,*args):
+        t = threading.Thread(target=self.socketio.run, args=args, daemon=True)
+        t.start()
+        return t
