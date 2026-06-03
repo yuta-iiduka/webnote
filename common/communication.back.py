@@ -16,12 +16,12 @@ sysctl -w net.ipv4.tcp_max_syn_backlog=60000
 sysctl -w net.ipv4.ip_local_port_range="1024 65535"
 
 """
-import asyncio, json, struct, uuid, socket, base64, time, threading, datetime
+import asyncio, json, struct, uuid, socket, base64, time, threading
 
 INTERVAL_TIME = 0.001
 INTERVAL_NONE = 0
 TIMEOUT_TIME = 3
-RETRY_TIME = 10
+RETRY_TIME = 2
 MAX_PACKET_SIZE = 1024 #4096 # 2048 # 1024  # 分割サイズ
 HEADER_FORMAT = "!I"    # 4byte length header
 DUAL_STUCK_HOST = "::"
@@ -218,12 +218,11 @@ class BaseConnection:
         self.assembler = PacketAssembler() # 分割されたパケットを復元するオブジェクト
         self.echos = {}                    # 相手からの応答が必要な場合にスタックさせるエコー保持用の辞書型データ
         self.timer = {}                    # パケットID:パケット受信の最終更新日時を保持
+        self.event_loop = asyncio.new_event_loop()
         self.queue = asyncio.Queue(maxsize=10000000)
         self._save = None
         self._load = None
-        self.send_lock = asyncio.Lock()
-        self.closing = False
-        self.status = "OPENING" # OPENING READY RECONNECTING CLOSED
+        self.lock = asyncio.Lock()
 
 
     @property
@@ -242,10 +241,13 @@ class BaseConnection:
         """
         ### Outlines
             内部の通信オブジェクトが扱うアドレスデータの構造へ解決するメソッド
+
         ### Args
             addr: (host, port)のtuple型データ
+
         ### Returns
             remote_addr: 解決された送信先のアドレスデータ
+
         ### Examples
         ```
             # 受信時の処理（コールバック）
@@ -264,10 +266,13 @@ class BaseConnection:
         """
         ### Outlines
             内部の通信オブジェクトが扱うアドレスデータの構造へ解決するメソッド
+
         ### Args
             addr: (host, port)のtuple型データ
+
         ### Returns
             remote_addr: 解決された送信先のアドレスデータ
+
         ### Examples
         ```
             # 受信時の処理（コールバック）
@@ -292,10 +297,13 @@ class BaseConnection:
         """
         ### Outlines
             パケット受信時のコールバック関数登録メソッド
+
         ### Args
             callback: 引数(data:受信データ, addr:送信元のアドレスを表現したtuple型データ)をもつコールバック関数
+
         ### Returns
             callback: 引数のコールバック関数
+
         ### Examples
         ```
             # 受信時の処理（コールバック）
@@ -311,10 +319,13 @@ class BaseConnection:
         """
         ### Outlines
             受信したパケットのtype属性によって発火するコールバック関数登録メソッド
+
         ###  Arg
             func: 引数(data:受信データ, addr:送信元のアドレスを表現したtuple型データ)をもつコールバック関数
+        
         ### Returns
             func: 引数のコールバック関数
+
         ### Example
         ```
             # data={"type":"hoge","message":"HELLO WORLD!!"} に対して発火するコールバック関数の例
@@ -330,14 +341,10 @@ class BaseConnection:
                 setattr(self,func.__name__,func)
             else:
                 raise Exception("duplication callback function name.")
+
         except Exception as e:
             setattr(self,func.__name__,func)
         return func
-    
-    async def wait(self):
-        while self.status != "READY":
-            await asyncio.sleep(0.1)
-
 
     async def _handle_data(self, data, addr=None):
         if isinstance(data, dict) and data.get("type") == "chunk":
@@ -421,6 +428,7 @@ class BaseConnection:
     async def sendfile(self, filename, filedata, addr=None, queue=False):
         print("filename",filename)
         data = {"type":"file","filedata":base64.b64encode(filedata).decode("ascii"),"filename":filename}
+        
         if addr:
             if queue:
                 return self.enqueue(data,addr)
@@ -432,6 +440,7 @@ class BaseConnection:
             else:
                 return await self.send(data)
                 
+
     async def send_by_open_file(self, filepath, savepath, addr=None, queue=True):
         result = False
         data = None
@@ -452,55 +461,41 @@ class BaseConnection:
     async def close(self):
         pass
 
+    async def reload(self):
+        await self.close()
+        await self.open()
+
     def connection_lost(self, exc):
         print("接続が閉じられました:", exc)
     
     def error_received(self, exc):
         print("UDPエラー:", exc)
-        if self.status == "READY":
-            self.status = "RECONNECTING"
-            asyncio.create_task(self.reconnect())
+        self.coroutine(self.reload())
 
-    async def reconnect(self):
-        if self.status != "RECONNECTING":
-            return
-        try:
-            await self.close()
-        except Exception as e:
-            print(e)
-        
-        while True:
-            try:
-                await asyncio.sleep(1)
-                await self.open()
-                break
-            except Exception as e:
-                print(e)
+    def loop(self):
+        lp = self.event_loop
+        asyncio.set_event_loop(lp)
+        lp.run_until_complete(self.open())
+        lp.run_forever()
 
-    # def loop(self):
-    #     lp = self.event_loop
-    #     asyncio.set_event_loop(lp)
-    #     lp.run_until_complete(self.open())
-    #     lp.run_forever()
-
-    # def run(self):
-    #     """ ループスレッドを生成
-    #     ```
-    #         asyncio.run_coroutine_threadsafe(method,loop)
-    #     ```
-    #     """
-    #     t = threading.Thread(target=self.loop, daemon=True)
-    #     t.start()
-    #     return t
+    def run(self):
+        """ ループスレッドを生成
+        ```
+            asyncio.run_coroutine_threadsafe(method,loop)
+        ```
+        """
+        t = threading.Thread(target=self.loop, daemon=True)
+        t.start()
+        return t
     
-    # def coroutine(self,async_task):
-    #     """ 別イベントループにタスクを登録する同期処理メソッド
-    #     ```
-    #         # 戻り値の取得
-    #         result = self.coroutine(async_task).result()
-    #     ```
-    #     """
-    #    return asyncio.run_coroutine_threadsafe(async_task, self.event_loop)
+    def coroutine(self,async_task):
+        """ 別イベントループにタスクを登録する同期処理メソッド
+        ```
+            # 戻り値の取得
+            result = self.coroutine(async_task).result()
+        ```
+        """
+        return asyncio.run_coroutine_threadsafe(async_task, self.event_loop)
     
     def enqueue(self,data,addr):
         result = True
@@ -524,9 +519,10 @@ class BaseConnection:
         while True:
             item = await self.queue.get()
             try:
-                ok = await self.sendto(item["data"],item["addr"])
-                if not ok:
-                    raise Exception("送信に失敗しました。")
+                async with self.lock:
+                    ok = await self.sendto(item["data"],item["addr"])
+                    if not ok:
+                        raise Exception("送信に失敗しました。")
                 
             except Exception as e:
                 item["retry"] += 1
@@ -539,6 +535,8 @@ class BaseConnection:
                 self.queue.task_done()
             await asyncio.sleep(INTERVAL_TIME)
 
+    def run_worker(self):
+        asyncio.create_task(self.worker())
 
     def save(self,item):
         """ 未送信データの保存メソッド
@@ -796,31 +794,18 @@ class UDPServer(BaseConnection):
         self.family = self.get_address_family(host)
 
     async def open(self):
-        self.status = "OPENING"
-        try:
-            loop = asyncio.get_running_loop()
-            self._closer, self.protocol = (
-                await loop.create_datagram_endpoint(
-                    lambda: self,
-                    local_addr=(self.host, self.port),
-                    family=self.family
-                )
-            )
-            self.status = "READY"
-            asyncio.create_task(self.worker())
-        except Exception as e:
-            self.status = "RECONNECTING"
+        loop = asyncio.get_running_loop()
+        self._closer, self.protocol = await loop.create_datagram_endpoint(
+            lambda: self,
+            local_addr=(self.host, self.port),
+            family=self.family,
+        )
 
     async def close(self):
-        self.status = "CLOSED"
-        self.closing = True
-        if self._closer:
-            self._closer.close()
-        self.transport = None
+        self._closer.close()
         self._closer = None
         self.protocol = None
         await asyncio.sleep(INTERVAL_TIME)
-        self.closing = False
 
     def connection_made(self, transport):
         self.transport = transport
@@ -832,7 +817,6 @@ class UDPServer(BaseConnection):
         asyncio.create_task(self._handle_data(obj, remote_addr))
 
     async def send(self, data, wait=True):
-        await self.wait()
         raw = json.dumps(data).encode()
         pid, chunks = Packet.split(raw)
         result = True
@@ -849,36 +833,31 @@ class UDPServer(BaseConnection):
                             # raise Exception(f"送信に失敗しました。:{addr}:{data}")
                             print(f"送信に失敗しました。:{addr}:{data}")
                             result = False
-                        else:
-                            self.transport.sendto(json.dumps(chunk).encode(),addr)
+
                         retry += 1
 
                 # await asyncio.sleep(INTERVAL_NONE)
         return result
 
     async def sendto(self, data, addr=None, wait=True):
-        await self.wait()
-        if self.closing or self.transport is None:
-            return False
-        
         remote_addr = self.get_resolve_address(addr)
+
         raw = json.dumps(data).encode()
         pid, chunks = Packet.split(raw)
         result = True
-        async with self.send_lock:
-            for i, chunk in enumerate(chunks):
-                if wait:
-                    await self._set_echo(chunk,remote_addr)
-                self.transport.sendto(json.dumps(chunk).encode(), remote_addr)
-                await asyncio.sleep(INTERVAL_TIME)
-                if wait:
-                    retry = 0
-                    while await self._wait_echo(chunk,addr) and retry < RETRY_TIME:
-                        if retry >= RETRY_TIME:
-                            print(f"送信に失敗しました。:{addr}:{data}")
-                            result = False
-                        retry += 1
-                # await asyncio.sleep(INTERVAL_NONE)
+        for i, chunk in enumerate(chunks):
+            if wait:
+                await self._set_echo(chunk,remote_addr)
+            self.transport.sendto(json.dumps(chunk).encode(), remote_addr)
+            await asyncio.sleep(INTERVAL_TIME)
+            if wait:
+                retry = 0
+                while await self._wait_echo(chunk,addr) and retry < RETRY_TIME:
+                    if retry >= RETRY_TIME:
+                        print(f"送信に失敗しました。:{addr}:{data}")
+                        result = False
+                    retry += 1
+            # await asyncio.sleep(INTERVAL_NONE)
         return result
 
     # async def sendfile(self, filename, filedata, addr=None):
@@ -904,43 +883,28 @@ class UDPClient(BaseConnection):
         self.family = self.get_address_family(host)
 
     async def open(self):
-        self.status = "OPENING"
-        try:
-            loop = asyncio.get_running_loop()
-            local_addr = None
-            remote_addr = None
-            if self.family == socket.AF_INET6:
-                local_addr = ("::", self.local_port) if self.local_port else None
-                remote_addr = (self.host,self.port)
-            else:
-                local_addr = (LOCAL_HOST, self.local_port) if self.local_port else None
-                remote_addr = (self.host,self.port)
+        loop = asyncio.get_running_loop()
+        local_addr = None
+        remote_addr = None
+        if self.family == socket.AF_INET6:
+            local_addr = ("::", self.local_port) if self.local_port else None
+            remote_addr = (self.host,self.port)
+        else:
+            local_addr = (LOCAL_HOST, self.local_port) if self.local_port else None
+            remote_addr = (self.host,self.port)
 
-            self._closer, self.protocol = (
-            await loop.create_datagram_endpoint(
-                lambda: self,
-                remote_addr=remote_addr,
-                local_addr=local_addr,
-                family=self.family
-                )
-            )
-            self.status = "READY"
-            asyncio.create_task(self.worker())
-        except Exception as e:
-            self.status = "RECONNECTING"
-            raise e
-
+        self._closer, self.protocol = await loop.create_datagram_endpoint(
+            lambda: self,
+            remote_addr=remote_addr,
+            family=self.family,
+            local_addr=local_addr,
+        )
 
     async def close(self):
-        self.status = "CLOSED"
-        self.closing = True
-        if self._closer:
-            self._closer.close()
-        self.transport = None
+        self._closer.close()
         self._closer = None
         self.protocol = None
         await asyncio.sleep(INTERVAL_TIME)
-        self.closing = False
 
     def connection_made(self, transport):
         self.transport = transport
@@ -954,28 +918,22 @@ class UDPClient(BaseConnection):
         return await self.sendto(data)
 
     async def sendto(self, data, addr=None, wait=True):
-        await self.wait()
-        if self.closing or self.transport is None:
-            return False
         remote_addr = self.get_resolve_address(addr)
         raw = json.dumps(data).encode()
         pid, chunks = Packet.split(raw)
         result = True
-        async with self.send_lock:
-            for i, chunk in enumerate(chunks):
-                if wait:
-                    await self._set_echo(chunk,remote_addr)
-                self.transport.sendto(json.dumps(chunk).encode(),remote_addr)
-                await asyncio.sleep(INTERVAL_TIME)
-                if wait:
-                    retry = 0
-                    while await self._wait_echo(chunk,addr) and retry < RETRY_TIME:
-                        if retry >= RETRY_TIME:
-                            print(f"送信に失敗しました。:{addr}:{data}")
-                            result = False
-                        else:
-                            self.transport.sendto(json.dumps(chunk).encode(),addr)
-                        retry += 1
+        for i, chunk in enumerate(chunks):
+            if wait:
+                await self._set_echo(chunk,remote_addr)
+            self.transport.sendto(json.dumps(chunk).encode(),remote_addr)
+            await asyncio.sleep(INTERVAL_TIME)
+            if wait:
+                retry = 0
+                while await self._wait_echo(chunk,addr) and retry < RETRY_TIME:
+                    if retry >= RETRY_TIME:
+                        print(f"送信に失敗しました。:{addr}:{data}")
+                        result = False
+                    retry += 1
 
         return result
         
@@ -996,7 +954,6 @@ class UDPClient(BaseConnection):
 
 
 async def main():
-    from common.logger import logger
     import sys
     args = sys.argv[1:]
     mode = args[0]
@@ -1009,19 +966,18 @@ async def main():
 
     @udp.receive
     async def hoge(data,addr):
-        logger.debug(f"[{mode}]{addr} data:{data}")
+        print(f"[{mode}]{addr}data:{data}")
 
-    await udp.open()
-    await asyncio.sleep(1)
+    udp.run()
+    udp.run_worker()
 
     if mode == "client":
-        await udp.send_by_open_file("etc/data/sample.html",f"etc/data/sample.{mode}.html",("::1",9999),True)
+        udp.coroutine(udp.send_by_open_file("etc/data/sample.html",f"etc/data/sample.{mode}.html",("::1",9999),True))
     else:
         # udp.coroutine(udp.send_by_open_file("etc/data/sample.html",f"etc/data/sample.{mode}.html",("::1",9998),True))
         pass
 
     while True:
-        print(udp.status)
         await asyncio.sleep(1)
 
 
